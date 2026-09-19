@@ -1,12 +1,14 @@
 {
   "name": "remote-access-signaling-server",
   "version": "1.0.0",
-  "description": "Servidor de sinalizacao para o app de acesso remoto",
+  "description": "Servidor de sinalizacao, licencas e webhook para o app de acesso remoto",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.17.0"
+    "ws": "^8.17.0",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.14"
   }
 }

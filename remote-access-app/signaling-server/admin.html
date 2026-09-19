@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Painel Administrativo - HennAccess</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f4f5f7; margin: 0; padding: 24px; color: #222; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+  .cards { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .card { background: white; border-radius: 10px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); min-width: 140px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .card .label { font-size: 12px; color: #888; margin-top: 4px; }
+  .card.active .value { color: #2e9e5b; }
+  .card.expired .value { color: #d64545; }
+  .card.soon .value { color: #d68e35; }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  th, td { text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #eee; }
+  th { background: #fafafa; color: #666; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .status { padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .status.active { background: #e3f7e9; color: #2e9e5b; }
+  .status.expired { background: #fdeaea; color: #d64545; }
+  .status.pending_activation { background: #fff4e0; color: #d68e35; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  button { background: #2f6fed; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #2559c9; }
+  .empty { text-align: center; padding: 40px; color: #888; }
+</style>
+</head>
+<body>
+
+<h1>📋 Painel Administrativo</h1>
+<div class="subtitle">Clientes e licenças do HennAccess</div>
+
+<div id="system-banner" style="display:none; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; font-weight: 600;"></div>
+
+<div class="cards" id="system-cards"></div>
+
+<div class="cards" id="cards"></div>
+
+<div class="toolbar">
+  <div></div>
+  <button onclick="window.location.href='/admin/api/export.csv'">⬇ Exportar e-mails (CSV)</button>
+  <button onclick="window.location.href='/admin/api/export-json'" style="margin-left:8px; background:#555;">💾 Exportar backup completo (JSON)</button>
+</div>
+
+<table id="table">
+  <thead>
+    <tr>
+      <th>E-mail</th>
+      <th>Chave de Licença</th>
+      <th>Status</th>
+      <th>Criado em</th>
+      <th>Ativado em</th>
+      <th>Expira em</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+const statusLabels = {
+  active: 'Ativo',
+  expired: 'Vencido',
+  pending_activation: 'Aguardando ativação',
+};
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  return new Date(iso).toLocaleDateString('pt-BR');
+}
+
+function daysUntil(iso) {
+  if (!iso) return null;
+  return Math.ceil((new Date(iso) - new Date()) / (1000 * 60 * 60 * 24));
+}
+
+async function loadSystemStatus() {
+  try {
+    const res = await fetch('/admin/api/system-status');
+    const status = await res.json();
+
+    const banner = document.getElementById('system-banner');
+    if (status.isAboveThreshold) {
+      banner.style.display = 'block';
+      banner.style.background = '#fdeaea';
+      banner.style.color = '#d64545';
+      banner.innerHTML = `⚠️ Atenção: o servidor está usando ${status.percentUsed}% da RAM disponível. Considere fazer upgrade do plano no Render em breve.`;
+    } else {
+      banner.style.display = 'none';
+    }
+
+    const ramColor = status.percentUsed >= 70 ? '#d64545' : (status.percentUsed >= 50 ? '#d68e35' : '#2e9e5b');
+    document.getElementById('system-cards').innerHTML = `
+      <div class="card"><div class="value" style="color:${ramColor}">${status.percentUsed}%</div><div class="label">RAM usada (${status.usedMB}MB de ${status.limitMB}MB)</div></div>
+      <div class="card"><div class="value">${status.connectedClients}</div><div class="label">Conexões agora</div></div>
+    `;
+  } catch (e) {
+    console.error('Não foi possível carregar o status do servidor:', e);
+  }
+}
+
+async function load() {
+  const res = await fetch('/admin/api/licenses');
+  const licenses = await res.json();
+
+  let active = 0, expired = 0, soon = 0, pending = 0;
+
+  licenses.forEach((l) => {
+    const days = daysUntil(l.expiresAt);
+    if (l.status === 'pending_activation') pending++;
+    else if (days !== null && days < 0) expired++;
+    else if (days !== null && days <= 30) { active++; soon++; }
+    else active++;
+  });
+
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="value">${licenses.length}</div><div class="label">Total de clientes</div></div>
+    <div class="card active"><div class="value">${active}</div><div class="label">Licenças ativas</div></div>
+    <div class="card soon"><div class="value">${soon}</div><div class="label">Vencem em 30 dias</div></div>
+    <div class="card expired"><div class="value">${expired}</div><div class="label">Vencidas</div></div>
+    <div class="card"><div class="value">${pending}</div><div class="label">Aguardando ativação</div></div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  if (licenses.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">Nenhum cliente registrado ainda.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = licenses.map((l) => {
+    let statusKey = l.status;
+    const days = daysUntil(l.expiresAt);
+    if (statusKey === 'active' && days !== null && days < 0) statusKey = 'expired';
+    return `
+      <tr>
+        <td>${l.email || '-'}</td>
+        <td><code>${l.key}</code></td>
+        <td><span class="status ${statusKey}">${statusLabels[statusKey] || statusKey}</span></td>
+        <td>${formatDate(l.createdAt)}</td>
+        <td>${formatDate(l.activatedAt)}</td>
+        <td>${formatDate(l.expiresAt)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+load();
+loadSystemStatus();
+setInterval(loadSystemStatus, 60000); // atualiza a cada 1 minuto
+</script>
+</body>
+</html>
