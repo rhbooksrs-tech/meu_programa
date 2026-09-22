@@ -43,15 +43,29 @@ app.get('/version', (req, res) => {
 // Configure na Kiwify a URL como: https://SEU-SERVICO.onrender.com/webhook/kiwify?token=SEU_TOKEN_SECRETO
 // (o token é escolhido por você e configurado também na variável de ambiente KIWIFY_WEBHOOK_TOKEN)
 app.post('/webhook/kiwify', async (req, res) => {
-  const token = req.query.token;
-  if (!process.env.KIWIFY_WEBHOOK_TOKEN || token !== process.env.KIWIFY_WEBHOOK_TOKEN) {
-    console.warn('[webhook kiwify] token inválido ou ausente');
+  // Registra tudo ANTES de validar o token — assim, mesmo que a validação
+  // falhe, conseguimos ver exatamente o formato real que a Kiwify mandou
+  // (cabeçalhos e corpo), o que é essencial pra confirmar onde o token
+  // realmente vem e ajustar o parsing dos campos abaixo se necessário.
+  console.log('[webhook kiwify] headers recebidos:', JSON.stringify(req.headers));
+  console.log('[webhook kiwify] query recebida:', JSON.stringify(req.query));
+  console.log('[webhook kiwify] payload recebido:', JSON.stringify(req.body));
+
+  // A Kiwify pode mandar o token de formas diferentes dependendo do tipo de
+  // webhook — checamos os locais mais comuns (query string, alguns nomes de
+  // cabeçalho, e um campo "token" dentro do próprio corpo).
+  const candidateToken =
+    req.query.token ||
+    req.headers['x-kiwify-token'] ||
+    req.headers['x-webhook-token'] ||
+    req.headers['token'] ||
+    (req.body && req.body.token) ||
+    null;
+
+  if (!process.env.KIWIFY_WEBHOOK_TOKEN || candidateToken !== process.env.KIWIFY_WEBHOOK_TOKEN) {
+    console.warn(`[webhook kiwify] token inválido ou ausente (recebido: ${candidateToken})`);
     return res.status(401).send('unauthorized');
   }
-
-  // Registra o corpo bruto nos logs — útil para confirmarmos o formato exato
-  // dos campos enviados pela Kiwify e ajustarmos o parsing abaixo se necessário.
-  console.log('[webhook kiwify] payload recebido:', JSON.stringify(req.body));
 
   try {
     const body = req.body || {};
@@ -92,11 +106,24 @@ app.post('/webhook/kiwify', async (req, res) => {
       } else {
         console.warn('[webhook kiwify] não foi possível encontrar a licença para renovar.');
       }
-    } else {
-      // Instalação nova (padrão, se não identificarmos explicitamente como renovação)
+    } else if (productId && NEW_PRODUCT_ID && String(productId) === String(NEW_PRODUCT_ID)) {
+      // Instalação nova
       const created = license.createLicense(email, orderId);
       await mailer.sendLicenseEmail(email, created.key);
       console.log(`[webhook kiwify] licença nova criada: ${created.key}`);
+    } else {
+      // productId não bate com nenhum dos dois IDs conhecidos — não arrisca criar/renovar errado
+      console.warn(
+        `[webhook kiwify] productId (${productId}) não corresponde a KIWIFY_PRODUCT_ID_NEW nem ` +
+        `KIWIFY_PRODUCT_ID_RENEWAL. Nenhuma licença foi criada ou renovada. Confira as variáveis de ambiente.`
+      );
+      await mailer.sendAdminAlert(
+        'Webhook da Kiwify com productId desconhecido',
+        `Uma compra foi aprovada, mas o productId (${productId}) não bate com nenhum produto ` +
+        `configurado (KIWIFY_PRODUCT_ID_NEW ou KIWIFY_PRODUCT_ID_RENEWAL).\n\n` +
+        `E-mail do comprador: ${email}\nPedido: ${orderId}\n\n` +
+        `Nenhuma licença foi criada automaticamente — confira manualmente e corrija as variáveis de ambiente se necessário.`
+      );
     }
 
     res.status(200).send('ok');
