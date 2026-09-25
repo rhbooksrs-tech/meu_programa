@@ -50,7 +50,6 @@ app.post('/webhook/kiwify', async (req, res) => {
   console.log('[webhook kiwify] HMAC-SHA256 calculado:', hmacSha256);
 
   if (!token || !receivedSignature || receivedSignature !== hmacSha1) {
-
     console.warn('[webhook kiwify] assinatura inválida ou ausente.');
     return res.status(401).send('unauthorized');
   }
@@ -66,17 +65,17 @@ app.post('/webhook/kiwify', async (req, res) => {
 
     const NEW_PRODUCT_ID = process.env.KIWIFY_PRODUCT_ID_NEW;
     const RENEWAL_PRODUCT_ID = process.env.KIWIFY_PRODUCT_ID_RENEWAL;
+
     const approvedEvents = ['compra_aprovada', 'purchase.approved', 'paid', 'approved'];
     const isApproved = approvedEvents.some((e) => String(eventType).toLowerCase().includes(e.toLowerCase()));
 
     if (!isApproved) {
-
       console.log('[webhook kiwify] evento ignorado (não é aprovação de compra.)');
       return res.status(200).send('ignored');
     }
 
-    if (productId && RENEWAL_PRODUCT_ID && String(productId) === String(RENEWAL_PRODUCT_ID))) {
-
+    // CORREÇÃO: parêntese extra removido nas duas condições abaixo
+    if (productId && RENEWAL_PRODUCT_ID && String(productId) === String(RENEWAL_PRODUCT_ID)) {
       const licenseKeyField = body.licenseKey || body.custom_fields?.licenseKey || null;
       let updated = null;
       if (licenseKeyField) {
@@ -90,13 +89,11 @@ app.post('/webhook/kiwify', async (req, res) => {
       } else {
         console.warn('[webhook kiwify] não foi possível encontrar a licença para renovar.');
       }
-    } else if (productId && NEW_PRODUCT_ID && String(productId) === String(NEW_PRODUCT_ID))) {
-
+    } else if (productId && NEW_PRODUCT_ID && String(productId) === String(NEW_PRODUCT_ID)) {
       const created = license.createLicense(email, orderId);
       await mailer.sendLicenseEmail(email, created.key);
       console.log(`[webhook kiwify] licença nova criada: ${created.key}`);
     } else {
-
       console.warn(
         `[webhook kiwify] productId (${productId}) não corresponde a KIWIFY_PRODUCT_ID_NEW nem ` +
         `KIWIFY_PRODUCT_ID_RENEWAL. Nenhuma licença foi criada ou renovada. Confira as variáveis de ambiente.`
@@ -109,6 +106,7 @@ app.post('/webhook/kiwify', async (req, res) => {
         `Nenhuma licença foi criada automaticamente — confira manualmente e corrija as variáveis de ambiente se necessário.`
       );
     }
+
     res.status(200).send('ok');
   } catch (e) {
     console.error('[webhook kiwify] erro ao processar:', e);
@@ -125,7 +123,10 @@ app.post('/license/activate', async (req, res) => {
   const result = license.activateLicense(licenseKey, machineFingerprint, machineName);
   if (!result.ok) {
     await abuseMonitor.recordFailedActivation({
-      key: licenseKey, fingerprint: machineFingerprint, ip: req.ip, reason: result.reason,
+      key: licenseKey,
+      fingerprint: machineFingerprint,
+      ip: req.ip,
+      reason: result.reason,
     });
   }
   res.json(result);
@@ -141,13 +142,19 @@ app.post('/license/validate', (req, res) => {
 });
 
 // ---- Painel administrativo (protegido por senha) ----
-const adminAuth = basicAuth({ user: process.env.ADMIN_USER || 'admin', password: process.env.ADMIN_PASSWORD || 'troque-esta-senha' });
+const adminAuth = basicAuth({
+  user: process.env.ADMIN_USER || 'admin',
+  password: process.env.ADMIN_PASSWORD || 'troque-esta-senha',
+});
+
 app.get('/admin', adminAuth, (req, res) => {
   res.sendFile(require('path').join(__dirname, 'admin.html'));
 });
+
 app.get('/admin/api/licenses', adminAuth, (req, res) => {
   res.json(license.listAllLicenses());
 });
+
 app.get('/admin/api/export.csv', adminAuth, (req, res) => {
   const licenses = license.listAllLicenses();
   const header = 'email,chave,status,criado_em,ativado_em,expira_em\n';
@@ -158,9 +165,11 @@ app.get('/admin/api/export.csv', adminAuth, (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="clientes.csv"');
   res.send(header + rows);
 });
+
 app.get('/admin/api/system-status', adminAuth, (req, res) => {
   res.json(monitor.getCurrentStatus(wss));
 });
+
 app.get('/admin/api/export-json', adminAuth, (req, res) => {
   const backup = license.exportAll();
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -169,7 +178,7 @@ app.get('/admin/api/export-json', adminAuth, (req, res) => {
 });
 
 // ============================================================
-// 2. SERVIDOR DE SINALIZAÇÃO (WebSocket) — igual ao que já tínhamos
+// 2. SERVIDOR DE SINALIZAÇÃO (WebSocket)
 // ============================================================
 const httpServer = http.createServer(app);
 const wss = new WebSocket.Server({ server: httpServer });
@@ -177,7 +186,7 @@ monitor.startMonitoring(wss);
 
 const agents = new Map();
 const pendingTechnicians = new Map();
-const technicians = new Set(); // NOVO: rastreia os técnicos conectados
+const technicians = new Set(); // rastreia os técnicos conectados
 
 function send(ws, data) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -193,7 +202,7 @@ function generateId() {
   return id;
 }
 
-// NOVO: avisa todos os técnicos conectados sobre a lista atual de agentes
+// avisa todos os técnicos conectados sobre a lista atual de agentes
 function broadcastAgents() {
   const list = Array.from(agents.keys());
   const payload = JSON.stringify({ type: 'agents-updated', agents: list });
@@ -208,7 +217,11 @@ wss.on('connection', (ws) => {
 
   ws.on('message', (raw) => {
     let msg;
-    try { msg = JSON.parse(raw); } catch (e) { return; }
+    try {
+      msg = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
 
     switch (msg.type) {
       case 'register-agent': {
@@ -218,26 +231,39 @@ wss.on('connection', (ws) => {
         agents.set(id, { ws, connectedTechnician: null, lastTechnician: null });
         send(ws, { type: 'registered', machineId: id });
         console.log(`[agente registrado] ID ${id}`);
-        broadcastAgents(); // NOVO
+        broadcastAgents();
         break;
       }
+
+      // NOVO: painel pede a lista de máquinas logo ao abrir
+      case 'list-agents': {
+        ws.role = 'technician';
+        technicians.add(ws);
+        send(ws, { type: 'agents-updated', agents: Array.from(agents.keys()) });
+        break;
+      }
+
       case 'request-connect': {
         ws.role = 'technician';
-        technicians.add(ws); // NOVO
+        technicians.add(ws);
+
         const target = agents.get(msg.targetId);
         if (!target) {
           send(ws, { type: 'error', code: 'id_not_found' });
           return;
         }
+
         pendingTechnicians.set(msg.targetId, ws);
         send(target.ws, { type: 'incoming-request', technicianName: msg.technicianName || 'Técnico' });
         console.log(`[pedido de conexão] técnico -> ${msg.targetId}`);
         break;
       }
+
       case 'respond-request': {
         const techWs = pendingTechnicians.get(ws.machineId);
         pendingTechnicians.delete(ws.machineId);
         if (!techWs) return;
+
         if (msg.accepted) {
           const agent = agents.get(ws.machineId);
           if (agent) {
@@ -252,6 +278,7 @@ wss.on('connection', (ws) => {
         }
         break;
       }
+
       case 'signal': {
         const target = agents.get(msg.targetId);
         if (target && target.ws !== ws) {
@@ -264,6 +291,7 @@ wss.on('connection', (ws) => {
         }
         break;
       }
+
       case 'end-session': {
         if (ws.role === 'agent') {
           const agent = agents.get(ws.machineId);
@@ -280,18 +308,25 @@ wss.on('connection', (ws) => {
         }
         break;
       }
+
       case 'submit-rating': {
         if (ws.role === 'agent') {
           const agent = agents.get(ws.machineId);
           if (agent && agent.lastTechnician) {
-
-            send(agent.lastTechnician, { type: 'rating-received', rating: msg.rating, comment: msg.comment || '', fromId: ws.machineId });
+            send(agent.lastTechnician, {
+              type: 'rating-received',
+              rating: msg.rating,
+              comment: msg.comment || '',
+              fromId: ws.machineId,
+            });
             console.log(`[avaliação] ${ws.machineId} avaliou com ${msg.rating} estrela(s)`);
           }
         }
         break;
       }
-      default: break;
+
+      default:
+        break;
     }
   });
 
@@ -300,10 +335,10 @@ wss.on('connection', (ws) => {
       agents.delete(ws.machineId);
       pendingTechnicians.delete(ws.machineId);
       console.log(`[agente desconectado] ID ${ws.machineId}`);
-      broadcastAgents(); // NOVO
+      broadcastAgents();
     }
     if (ws.role === 'technician') {
-      technicians.delete(ws); // NOVO
+      technicians.delete(ws);
     }
   });
 });
