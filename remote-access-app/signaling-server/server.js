@@ -155,6 +155,14 @@ app.get('/admin/api/licenses', adminAuth, (req, res) => {
   res.json(license.listAllLicenses());
 });
 
+// ---- Criação manual de licença (pelo dono, via painel admin) ----
+app.post('/admin/api/licenses/create', adminAuth, async (req, res) => {
+  const { email } = req.body || {};
+  const created = license.createLicense(email || null, null);
+  console.log(`[admin] licença criada manualmente: ${created.key} (email: ${email || 'nenhum'})`);
+  res.json({ ok: true, key: created.key, license: created });
+});
+
 app.get('/admin/api/export.csv', adminAuth, (req, res) => {
   const licenses = license.listAllLicenses();
   const header = 'email,chave,status,criado_em,ativado_em,expira_em\n';
