@@ -264,8 +264,14 @@ if (!TECHNICIAN_TOKEN) {
 }
 
 function technicianAuthorized(msg) {
-  if (!TECHNICIAN_TOKEN) return true; // modo de transição: nada quebra até o token ser configurado
-  return msg && msg.technicianToken === TECHNICIAN_TOKEN;
+  if (!TECHNICIAN_TOKEN) return true;
+  const received = msg && msg.technicianToken ? String(msg.technicianToken) : '';
+  if (received === TECHNICIAN_TOKEN) return true;
+  console.warn(
+    `[ws] TOKEN RECUSADO — recebido: "${received.slice(0, 4)}" (tamanho ${received.length}) | ` +
+    `esperado: "${TECHNICIAN_TOKEN.slice(0, 4)}" (tamanho ${TECHNICIAN_TOKEN.length})`
+  );
+  return false;
 }
 
 function send(ws, data) {
