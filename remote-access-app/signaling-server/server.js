@@ -9,6 +9,7 @@ const monitor = require('./monitor');
 const abuseMonitor = require('./abuse-monitor');
 
 const PORT = process.env.PORT || 8080;
+const TECHNICIAN_TOKEN = process.env.TECHNICIAN_TOKEN || '';
 
 // ============================================================
 // 1. SERVIDOR HTTP (Express) — licenças, webhook, admin
@@ -30,26 +31,49 @@ app.get('/version', (req, res) => {
   });
 });
 
+// ---- Idempotência do webhook: guarda pedidos já processados ----
+const processedOrders = new Map(); // orderId -> timestamp
+const PROCESSED_ORDERS_MAX = 5000;
+const PROCESSED_ORDERS_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+function markOrderProcessed(orderId) {
+  const now = Date.now();
+  processedOrders.set(orderId, now);
+  if (processedOrders.size > PROCESSED_ORDERS_MAX) {
+    for (const [id, ts] of processedOrders) {
+      if (now - ts > PROCESSED_ORDERS_TTL_MS) processedOrders.delete(id);
+      if (processedOrders.size <= PROCESSED_ORDERS_MAX) break;
+    }
+  }
+}
+
+function isOrderProcessed(orderId) {
+  const ts = processedOrders.get(orderId);
+  if (!ts) return false;
+  if (Date.now() - ts > PROCESSED_ORDERS_TTL_MS) {
+    processedOrders.delete(orderId);
+    return false;
+  }
+  return true;
+}
+
+// ---- Comparação de assinatura em tempo constante ----
+function safeCompare(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 // ---- Webhook da Kiwify ----
 app.post('/webhook/kiwify', async (req, res) => {
-  console.log('[webhook kiwify] headers recebidos:', JSON.stringify(req.headers));
-  console.log('[webhook kiwify] query recebida:', JSON.stringify(req.query));
-  console.log('[webhook kiwify] payload recebido:', JSON.stringify(req.body));
-
   const token = process.env.KIWIFY_WEBHOOK_TOKEN;
   const receivedSignature = req.query.signature || null;
   const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
 
   const hmacSha1 = crypto.createHmac('sha1', token || '').update(rawBody).digest('hex');
-  const sha1Plain = crypto.createHash('sha1').update(rawBody).digest('hex');
-  const hmacSha256 = crypto.createHmac('sha256', token || '').update(rawBody).digest('hex');
 
-  console.log('[webhook kiwify] assinatura recebida:', receivedSignature);
-  console.log('[webhook kiwify] HMAC-SHA1 calculado:', hmacSha1);
-  console.log('[webhook kiwify] SHA1 puro calculado:', sha1Plain);
-  console.log('[webhook kiwify] HMAC-SHA256 calculado:', hmacSha256);
-
-  if (!token || !receivedSignature || receivedSignature !== hmacSha1) {
+  if (!token || !receivedSignature || !safeCompare(receivedSignature, hmacSha1)) {
     console.warn('[webhook kiwify] assinatura inválida ou ausente.');
     return res.status(401).send('unauthorized');
   }
@@ -61,7 +85,8 @@ app.post('/webhook/kiwify', async (req, res) => {
     const orderId = body.order_id || body.OrderId || body.id || null;
     const eventType = body.webhook_event_type || body.event || body.order_status || 'desconhecido';
 
-    console.log(`[webhook kiwify] evento=${eventType} email=${email} productId=${productId}`);
+    // log enxuto: sem headers nem payload completo (dados do comprador)
+    console.log(`[webhook kiwify] evento=${eventType} productId=${productId} orderId=${orderId} email=${email}`);
 
     const NEW_PRODUCT_ID = process.env.KIWIFY_PRODUCT_ID_NEW;
     const RENEWAL_PRODUCT_ID = process.env.KIWIFY_PRODUCT_ID_RENEWAL;
@@ -70,11 +95,17 @@ app.post('/webhook/kiwify', async (req, res) => {
     const isApproved = approvedEvents.some((e) => String(eventType).toLowerCase().includes(e.toLowerCase()));
 
     if (!isApproved) {
-      console.log('[webhook kiwify] evento ignorado (não é aprovação de compra.)');
+      console.log('[webhook kiwify] evento ignorado (não é aprovação de compra).');
       return res.status(200).send('ignored');
     }
 
-    // CORREÇÃO: parêntese extra removido nas duas condições abaixo
+    // reenvio da Kiwify: se o pedido já foi processado, ignora
+    if (orderId && isOrderProcessed(String(orderId))) {
+      console.log(`[webhook kiwify] pedido ${orderId} já processado — reenvio ignorado.`);
+      return res.status(200).send('already-processed');
+    }
+    if (orderId) markOrderProcessed(String(orderId));
+
     if (productId && RENEWAL_PRODUCT_ID && String(productId) === String(RENEWAL_PRODUCT_ID)) {
       const licenseKeyField = body.licenseKey || body.custom_fields?.licenseKey || null;
       let updated = null;
@@ -84,19 +115,31 @@ app.post('/webhook/kiwify', async (req, res) => {
         updated = license.extendLicenseByEmail(email);
       }
       if (updated) {
-        await mailer.sendRenewalEmail(email, updated.key, updated.expiresAt);
+        res.status(200).send('ok'); // responde na hora
+        mailer.sendRenewalEmail(email, updated.key, updated.expiresAt)
+          .catch((e) => console.error('[webhook kiwify] falha ao enviar e-mail de renovação:', e));
         console.log(`[webhook kiwify] renovação processada para ${updated.key}`);
       } else {
         console.warn('[webhook kiwify] não foi possível encontrar a licença para renovar.');
+        await mailer.sendAdminAlert(
+          'Renovação não encontrou a licença',
+          `Uma renovação foi aprovada, mas nenhuma licença foi encontrada.\n` +
+          `E-mail do comprador: ${email}\nPedido: ${orderId}\n` +
+          `Chave informada no checkout: ${licenseKeyField || 'nenhuma'}\n\n` +
+          `Provável causa: o cliente comprou a renovação com um e-mail diferente do da licença.`
+        );
+        res.status(200).send('ok');
       }
     } else if (productId && NEW_PRODUCT_ID && String(productId) === String(NEW_PRODUCT_ID)) {
       const created = license.createLicense(email, orderId);
-      await mailer.sendLicenseEmail(email, created.key);
+      res.status(200).send('ok'); // responde na hora; e-mail vai em segundo plano
+      mailer.sendLicenseEmail(email, created.key)
+        .catch((e) => console.error('[webhook kiwify] falha ao enviar e-mail de licença:', e));
       console.log(`[webhook kiwify] licença nova criada: ${created.key}`);
     } else {
       console.warn(
         `[webhook kiwify] productId (${productId}) não corresponde a KIWIFY_PRODUCT_ID_NEW nem ` +
-        `KIWIFY_PRODUCT_ID_RENEWAL. Nenhuma licença foi criada ou renovada. Confira as variáveis de ambiente.`
+        `KIWIFY_PRODUCT_ID_RENEWAL. Nenhuma licença foi criada ou renovada.`
       );
       await mailer.sendAdminAlert(
         'Webhook da Kiwify com productId desconhecido',
@@ -105,12 +148,11 @@ app.post('/webhook/kiwify', async (req, res) => {
         `E-mail do comprador: ${email}\nPedido: ${orderId}\n\n` +
         `Nenhuma licença foi criada automaticamente — confira manualmente e corrija as variáveis de ambiente se necessário.`
       );
+      res.status(200).send('ok');
     }
-
-    res.status(200).send('ok');
   } catch (e) {
     console.error('[webhook kiwify] erro ao processar:', e);
-    res.status(500).send('error');
+    if (!res.headersSent) res.status(500).send('error');
   }
 });
 
@@ -142,43 +184,64 @@ app.post('/license/validate', (req, res) => {
 });
 
 // ---- Painel administrativo (protegido por senha) ----
+// Falha fechada: sem ADMIN_PASSWORD configurada, o painel fica bloqueado
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const adminAuth = basicAuth({
   user: process.env.ADMIN_USER || 'admin',
-  password: process.env.ADMIN_PASSWORD || 'troque-esta-senha',
+  password: ADMIN_PASSWORD,
 });
 
-app.get('/admin', adminAuth, (req, res) => {
+if (!ADMIN_PASSWORD) {
+  console.error('ERRO: ADMIN_PASSWORD não configurada. O painel /admin ficará BLOQUEADO até a variável ser definida.');
+}
+
+function adminGuard(req, res, next) {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).send('Painel admin desativado: configure ADMIN_PASSWORD no servidor.');
+  }
+  adminAuth(req, res, next);
+}
+
+app.get('/admin', adminGuard, (req, res) => {
   res.sendFile(require('path').join(__dirname, 'admin.html'));
 });
 
-app.get('/admin/api/licenses', adminAuth, (req, res) => {
+app.get('/admin/api/licenses', adminGuard, (req, res) => {
   res.json(license.listAllLicenses());
 });
 
 // ---- Criação manual de licença (pelo dono, via painel admin) ----
-app.post('/admin/api/licenses/create', adminAuth, async (req, res) => {
+app.post('/admin/api/licenses/create', adminGuard, async (req, res) => {
   const { email } = req.body || {};
   const created = license.createLicense(email || null, null);
   console.log(`[admin] licença criada manualmente: ${created.key} (email: ${email || 'nenhum'})`);
   res.json({ ok: true, key: created.key, license: created });
 });
 
-app.get('/admin/api/export.csv', adminAuth, (req, res) => {
+// ---- Exportação CSV com escape correto ----
+function csvField(value) {
+  const s = String(value == null ? '' : value);
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+app.get('/admin/api/export.csv', adminGuard, (req, res) => {
   const licenses = license.listAllLicenses();
   const header = 'email,chave,status,criado_em,ativado_em,expira_em\n';
   const rows = licenses
-    .map((l) => [l.email || '', l.key, l.status, l.createdAt, l.activatedAt || '', l.expiresAt || ''].join(','))
+    .map((l) =>
+      [csvField(l.email || ''), csvField(l.key), csvField(l.status), csvField(l.createdAt), csvField(l.activatedAt || ''), csvField(l.expiresAt || '')].join(',')
+    )
     .join('\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="clientes.csv"');
   res.send(header + rows);
 });
 
-app.get('/admin/api/system-status', adminAuth, (req, res) => {
+app.get('/admin/api/system-status', adminGuard, (req, res) => {
   res.json(monitor.getCurrentStatus(wss));
 });
 
-app.get('/admin/api/export-json', adminAuth, (req, res) => {
+app.get('/admin/api/export-json', adminGuard, (req, res) => {
   const backup = license.exportAll();
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="henndesk_backup_${Date.now()}.json"`);
@@ -193,8 +256,17 @@ const wss = new WebSocket.Server({ server: httpServer });
 monitor.startMonitoring(wss);
 
 const agents = new Map();
-const pendingTechnicians = new Map();
-const technicians = new Set(); // rastreia os técnicos conectados
+const pendingTechnicians = new Map(); // targetId -> { ws, timer }
+const technicians = new Set();
+
+if (!TECHNICIAN_TOKEN) {
+  console.warn('AVISO: TECHNICIAN_TOKEN não configurada — ações de técnico NÃO exigem token. Configure a variável na Render.');
+}
+
+function technicianAuthorized(msg) {
+  if (!TECHNICIAN_TOKEN) return true; // modo de transição: nada quebra até o token ser configurado
+  return msg && msg.technicianToken === TECHNICIAN_TOKEN;
+}
 
 function send(ws, data) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -210,7 +282,6 @@ function generateId() {
   return id;
 }
 
-// avisa todos os técnicos conectados sobre a lista atual de agentes
 function broadcastAgents() {
   const list = Array.from(agents.keys());
   const payload = JSON.stringify({ type: 'agents-updated', agents: list });
@@ -243,8 +314,11 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      // NOVO: painel pede a lista de máquinas logo ao abrir
       case 'list-agents': {
+        if (!technicianAuthorized(msg)) {
+          send(ws, { type: 'error', code: 'unauthorized' });
+          return;
+        }
         ws.role = 'technician';
         technicians.add(ws);
         send(ws, { type: 'agents-updated', agents: Array.from(agents.keys()) });
@@ -252,6 +326,10 @@ wss.on('connection', (ws) => {
       }
 
       case 'request-connect': {
+        if (!technicianAuthorized(msg)) {
+          send(ws, { type: 'error', code: 'unauthorized' });
+          return;
+        }
         ws.role = 'technician';
         technicians.add(ws);
 
@@ -261,16 +339,27 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        pendingTechnicians.set(msg.targetId, ws);
+        // pedido pendente expira em 60 segundos
+        const timer = setTimeout(() => {
+          const pending = pendingTechnicians.get(msg.targetId);
+          if (pending && pending.ws === ws) {
+            pendingTechnicians.delete(msg.targetId);
+            console.log(`[pedido de conexão] expirado para ${msg.targetId}`);
+          }
+        }, 60000);
+
+        pendingTechnicians.set(msg.targetId, { ws, timer });
         send(target.ws, { type: 'incoming-request', technicianName: msg.technicianName || 'Técnico' });
         console.log(`[pedido de conexão] técnico -> ${msg.targetId}`);
         break;
       }
 
       case 'respond-request': {
-        const techWs = pendingTechnicians.get(ws.machineId);
+        const pending = pendingTechnicians.get(ws.machineId);
         pendingTechnicians.delete(ws.machineId);
-        if (!techWs) return;
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        const techWs = pending.ws;
 
         if (msg.accepted) {
           const agent = agents.get(ws.machineId);
@@ -340,8 +429,12 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (ws.role === 'agent' && ws.machineId) {
+      const pending = pendingTechnicians.get(ws.machineId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingTechnicians.delete(ws.machineId);
+      }
       agents.delete(ws.machineId);
-      pendingTechnicians.delete(ws.machineId);
       console.log(`[agente desconectado] ID ${ws.machineId}`);
       broadcastAgents();
     }
