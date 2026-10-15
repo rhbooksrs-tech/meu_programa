@@ -4,6 +4,7 @@
  * Variáveis de ambiente necessárias (configuradas no Render, aba Environment):
  *   GMAIL_USER  -> seu e-mail do Gmail (ex: seuemail@gmail.com)
  *   GMAIL_APP_PASSWORD -> a "senha de app" gerada nas configurações do Google
+ *   APP_DOWNLOAD_URL -> link público do executável (o mesmo usado pelo atualizador)
  */
 
 const nodemailer = require('nodemailer');
@@ -26,18 +27,27 @@ async function sendLicenseEmail(toEmail, licenseKey) {
   const transporter = getTransporter();
   if (!transporter || !toEmail) return false;
 
+  // Link de download vem da mesma variável usada pelo atualizador do app
+  const downloadUrl = process.env.APP_DOWNLOAD_URL || '';
+  const downloadBlock = downloadUrl
+    ? `Baixe o programa aqui:\n${downloadUrl}\n\n`
+    : '';
+
   try {
     await transporter.sendMail({
       from: `"HennAccess - Suporte" <${process.env.GMAIL_USER}>`,
       to: toEmail,
-      subject: 'Sua chave de licença - Acesso Remoto',
+      subject: 'Sua chave de licença - HennAccess',
       text:
         `Obrigado pela compra!\n\n` +
         `Sua chave de licença é: ${licenseKey}\n\n` +
+        downloadBlock +
         `Como usar:\n` +
-        `1. Instale o programa no computador.\n` +
+        `1. Baixe e instale o programa no computador (Windows).\n` +
         `2. Na primeira vez que abrir, cole essa chave quando for pedida.\n` +
         `3. Pronto — a licença fica ativa por 1 ano a partir da ativação.\n\n` +
+        `Sua chave pode ser ativada em até 2 computadores.\n\n` +
+        `Dúvidas? Responda este e-mail — o suporte é direto com o desenvolvedor.\n\n` +
         `Guarde este e-mail para futuras renovações.`,
     });
     return true;
@@ -55,12 +65,12 @@ async function sendRenewalEmail(toEmail, licenseKey, expiresAt) {
     await transporter.sendMail({
       from: `"HennAccess - Suporte" <${process.env.GMAIL_USER}>`,
       to: toEmail,
-      subject: 'Licença renovada - Acesso Remoto',
+      subject: 'Licença renovada - HennAccess',
       text:
         `Sua licença foi renovada com sucesso!\n\n` +
         `Chave de licença: ${licenseKey}\n` +
         `Nova validade: ${new Date(expiresAt).toLocaleDateString('pt-BR')}\n\n` +
-        `Não é necessário reinstalar nada — o programa já está atualizado automaticamente.`,
+        `Não é necessário reinstalar nada — o programa já é atualizado automaticamente.`,
     });
     return true;
   } catch (e) {
