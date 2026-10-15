@@ -211,11 +211,11 @@ app.get('/admin/api/licenses', adminGuard, (req, res) => {
 });
 
 // ---- Criação manual de licença (pelo dono, via painel admin) ----
-app.post('/admin/api/licenses/create', adminGuard, async (req, res) => {
-  const { email } = req.body || {};
-  const created = license.createLicense(email || null, null);
-  console.log(`[admin] licença criada manualmente: ${created.key} (email: ${email || 'nenhum'})`);
-  res.json({ ok: true, key: created.key, license: created });
+app.post('/admin/api/licenses/reset-machine', adminGuard, (req, res) => {
+  const { key } = req.body || {};
+  const result = license.resetMachine(key);
+  console.log(`[admin] reset de máquinas da licença ${key}: ${result.ok ? 'ok' : result.reason}`);
+  res.json(result);
 });
 
 // ---- Exportação CSV com escape correto ----

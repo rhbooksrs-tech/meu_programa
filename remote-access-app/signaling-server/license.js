@@ -5,6 +5,10 @@
  * dentro do disco pago, ex: /data/licenses.json). No plano gratuito isso
  * seria perdido a cada reinício — por isso este projeto exige o plano
  * pago com disco persistente para esta funcionalidade.
+ *
+ * POLÍTICA DE ATIVAÇÃO: cada chave pode ser ativada em ATÉ 2 MÁQUINAS.
+ * A 2ª ativação NÃO reseta a validade — o relógio de 365 dias começa na 1ª.
+ * O dono pode liberar as máquinas de uma chave via resetMachine (painel admin).
  */
 
 const fs = require('fs');
@@ -12,6 +16,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 const DB_PATH = process.env.LICENSE_DB_PATH || path.join(__dirname, 'licenses.json');
+
+/** Quantas máquinas cada licença pode ativar. */
+const MAX_ACTIVATIONS = 2;
 
 function ensureDbDir() {
   const dir = path.dirname(DB_PATH);
@@ -39,6 +46,13 @@ function generateLicenseKey() {
   return `${part()}-${part()}-${part()}-${part()}`;
 }
 
+/** Retorna as máquinas vinculadas (compatível com licenças antigas de campo único). */
+function getFingerprints(lic) {
+  if (Array.isArray(lic.machineFingerprints)) return lic.machineFingerprints;
+  if (lic.machineFingerprint) return [lic.machineFingerprint];
+  return [];
+}
+
 /** Cria uma licença nova (após compra de "instalação nova"). Ainda não está ativada em nenhuma máquina. */
 function createLicense(email, orderId) {
   const db = loadDB();
@@ -47,6 +61,8 @@ function createLicense(email, orderId) {
     key,
     email: email || null,
     orderId: orderId || null,
+    machineFingerprints: [],
+    machineNames: [],
     machineFingerprint: null,
     machineName: null,
     activatedAt: null,
@@ -81,28 +97,48 @@ function extendLicenseByEmail(email, days = 365) {
   return extendLicenseByKey(match.key, days);
 }
 
-/** Ativa uma licença numa máquina específica (primeira execução do app). */
+/** Ativa uma licença em uma máquina (até MAX_ACTIVATIONS máquinas por chave).
+ *  A 2ª ativação NÃO reseta a validade — o relógio de 365 dias começa na 1ª. */
 function activateLicense(key, fingerprint, machineName) {
   const db = loadDB();
   const lic = db.licenses[key];
   if (!lic) return { ok: false, reason: 'not_found' };
 
-  if (lic.machineFingerprint && lic.machineFingerprint !== fingerprint) {
-    return { ok: false, reason: 'already_activated_elsewhere' };
+  const prints = getFingerprints(lic);
+
+  // Já ativada nesta máquina: reativação normal
+  if (prints.includes(fingerprint)) {
+    return { ok: true, license: lic };
   }
 
-  if (!lic.machineFingerprint) {
-    lic.machineFingerprint = fingerprint;
+  // Primeira ativação: vincula a máquina e começa os 365 dias
+  if (prints.length === 0) {
+    lic.machineFingerprints = [fingerprint];
+    lic.machineNames = [machineName || null];
+    lic.machineFingerprint = fingerprint; // mantido por compatibilidade
     lic.machineName = machineName || null;
     lic.activatedAt = new Date().toISOString();
-    const expires = new Date();
-    expires.setDate(expires.getDate() + 365);
-    lic.expiresAt = expires.toISOString();
+    if (!lic.expiresAt) {
+      const expires = new Date();
+      expires.setDate(expires.getDate() + 365);
+      lic.expiresAt = expires.toISOString();
+    }
     lic.status = 'active';
     saveDB(db);
+    return { ok: true, license: lic };
   }
 
-  return { ok: true, license: lic };
+  // Segunda ativação: adiciona a máquina sem mexer na validade
+  if (prints.length < MAX_ACTIVATIONS) {
+    lic.machineFingerprints = [...prints, fingerprint];
+    lic.machineNames = [...(lic.machineNames || [lic.machineName || null]), machineName || null];
+    saveDB(db);
+    console.log(`[licença] 2ª ativação usada na chave ${key} -> ${machineName || 'máquina sem nome'}`);
+    return { ok: true, license: lic, secondActivation: true };
+  }
+
+  // Limite de 2 máquinas atingido
+  return { ok: false, reason: 'already_activated_elsewhere' };
 }
 
 /** Confere se uma licença ainda é válida para determinada máquina. */
@@ -110,11 +146,25 @@ function validateLicense(key, fingerprint) {
   const db = loadDB();
   const lic = db.licenses[key];
   if (!lic) return { valid: false, reason: 'not_found' };
-  if (lic.machineFingerprint !== fingerprint) return { valid: false, reason: 'wrong_machine' };
+  if (!getFingerprints(lic).includes(fingerprint)) return { valid: false, reason: 'wrong_machine' };
   if (!lic.expiresAt || new Date(lic.expiresAt) < new Date()) {
     return { valid: false, reason: 'expired', expiresAt: lic.expiresAt };
   }
   return { valid: true, expiresAt: lic.expiresAt };
+}
+
+/** Uso manual pelo dono: libera as máquinas da licença (o cliente reativa depois).
+ *  A validade é mantida — o reset não recomeça o relógio de 365 dias. */
+function resetMachine(key) {
+  const db = loadDB();
+  const lic = db.licenses[key];
+  if (!lic) return { ok: false, reason: 'not_found' };
+  lic.machineFingerprints = [];
+  lic.machineNames = [];
+  lic.machineFingerprint = null;
+  lic.machineName = null;
+  saveDB(db);
+  return { ok: true, license: lic };
 }
 
 function listAllLicenses() {
@@ -166,6 +216,7 @@ module.exports = {
   extendLicenseByEmail,
   activateLicense,
   validateLicense,
+  resetMachine,
   listAllLicenses,
   exportAll,
   importLicenses,
