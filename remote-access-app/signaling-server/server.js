@@ -219,6 +219,21 @@ app.post('/admin/api/licenses/create', adminGuard, async (req, res) => {
   res.json({ ok: true, key: created.key, license: created });
 });
 
+// ---- Envio de e-mail de teste (pelo dono, via painel admin) ----
+app.post('/admin/api/test-email', adminGuard, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ ok: false, reason: 'missing_email' });
+  const testKey = 'TEST-0000-AAAA-BBBB';
+  try {
+    await mailer.sendLicenseEmail(email, testKey);
+    console.log(`[admin] e-mail de teste enviado para ${email}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[admin] falha ao enviar e-mail de teste:', e.message);
+    res.status(500).json({ ok: false, reason: 'send_failed' });
+  }
+});
+
 app.post('/admin/api/licenses/reset-machine', adminGuard, (req, res) => {
   const { key } = req.body || {};
   const result = license.resetMachine(key);
