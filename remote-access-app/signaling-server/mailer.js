@@ -28,7 +28,7 @@ async function sendLicenseEmail(toEmail, licenseKey) {
   if (!transporter || !toEmail) return false;
 
   // Link de download vem da mesma variável usada pelo atualizador do app
-  const downloadUrl = process.env.APP_DOWNLOAD_URL || '';
+  const downloadUrl = process.env.PUBLIC_DOWNLOAD_URL || process.env.APP_DOWNLOAD_URL || '';
   const downloadBlock = downloadUrl
     ? `Baixe o programa aqui:\n${downloadUrl}\n\n`
     : '';

@@ -256,6 +256,28 @@ app.get('/admin/api/export-json', adminGuard, (req, res) => {
   res.send(JSON.stringify(backup, null, 2));
 });
 
+// ---- Download do executável pelo próprio servidor (esconde o GitHub) ----
+const { Readable } = require('stream');
+
+app.get('/download', async (req, res) => {
+  const url = process.env.APP_DOWNLOAD_URL;
+  if (!url) return res.status(404).send('Download indisponível no momento. Fale com o suporte.');
+  try {
+    const upstream = await fetch(url, { redirect: 'follow' });
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).send('Arquivo temporariamente indisponível. Tente novamente em minutos.');
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="HennAccess.exe"');
+    const len = upstream.headers.get('content-length');
+    if (len) res.setHeader('Content-Length', len);
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (e) {
+    console.error('[download] erro ao repassar arquivo:', e.message);
+    if (!res.headersSent) res.status(502).send('Erro no download. Tente novamente.');
+  }
+});
+
 // ============================================================
 // 2. SERVIDOR DE SINALIZAÇÃO (WebSocket)
 // ============================================================
