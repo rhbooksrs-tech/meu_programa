@@ -8,6 +8,7 @@
  */
 
 const nodemailer = require('nodemailer');
+const path = require('path'); // ✅ NOVO: para localizar o PDF na pasta do projeto
 
 function getTransporter() {
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
@@ -22,6 +23,9 @@ function getTransporter() {
     },
   });
 }
+
+// ✅ NOVO: caminho do PDF (o arquivo precisa estar na MESMA pasta deste mailer.js)
+const GUIDE_PDF = path.join(__dirname, 'Guia de Instalação - HennAccess.pdf');
 
 async function sendLicenseEmail(toEmail, licenseKey) {
   const transporter = getTransporter();
@@ -47,8 +51,18 @@ async function sendLicenseEmail(toEmail, licenseKey) {
         `2. Na primeira vez que abrir, cole essa chave quando for pedida.\n` +
         `3. Pronto — a licença fica ativa por 1 ano a partir da ativação.\n\n` +
         `Sua chave pode ser ativada em até 2 computadores.\n\n` +
+        `⚠️ IMPORTANTE: o HennAccess funciona apenas no Windows 10 e 11 (64 bits).\n` + // ✅ NOVO: aviso de requisitos
+        `Não funciona em versões de 32 bits do Windows.\n\n` +
+        `📄 Guia de instalação completo em anexo: Guia_HennAccess.pdf\n\n` + // ✅ NOVO: avisa sobre o anexo
         `Dúvidas? Responda este e-mail — o suporte é direto com o desenvolvedor.\n\n` +
         `Guarde este e-mail para futuras renovações.`,
+      attachments: [
+        {
+          filename: 'Guia de Instalação - HennAccess.pdf',
+          path: GUIDE_PDF,
+          contentType: 'application/pdf',
+        },
+      ],
     });
     return true;
   } catch (e) {
