@@ -159,7 +159,6 @@ async function sendRenewalEmail(toEmail, licenseKey, expiresAt) {
     return false;
   }
 }
-}
 
 async function sendAdminAlert(subject, text) {
   const transporter = getTransporter();
