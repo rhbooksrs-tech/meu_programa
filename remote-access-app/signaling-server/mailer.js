@@ -37,12 +37,15 @@ async function sendLicenseEmail(toEmail, licenseKey) {
     ? `Baixe o programa aqui:\n${downloadUrl}\n\n`
     : '';
 
+  const divider = '\n\n' + '─'.repeat(48) + '\n\n';
+
   try {
     await transporter.sendMail({
       from: `"HennAccess - Suporte" <${process.env.GMAIL_USER}>`,
       to: toEmail,
-      subject: 'Sua chave de licença - HennAccess',
+      subject: 'Sua chave de licença - HennAccess | Your license key | Su clave de licencia',
       text:
+        // ---------- PORTUGUÊS ----------
         `Obrigado pela compra!\n\n` +
         `Sua chave de licença é: ${licenseKey}\n\n` +
         downloadBlock +
@@ -51,15 +54,59 @@ async function sendLicenseEmail(toEmail, licenseKey) {
         `2. Na primeira vez que abrir, cole essa chave quando for pedida.\n` +
         `3. Pronto — a licença fica ativa por 1 ano a partir da ativação.\n\n` +
         `Sua chave pode ser ativada em até 2 computadores.\n\n` +
-        `⚠️ IMPORTANTE: o HennAccess funciona apenas no Windows 10 e 11 (64 bits).\n` + // ✅ NOVO: aviso de requisitos
+        `⚠️ IMPORTANTE: o HennAccess funciona apenas no Windows 10 e 11 (64 bits).\n` +
         `Não funciona em versões de 32 bits do Windows.\n\n` +
-        `📄 Guia de instalação completo em anexo: Guia_HennAccess.pdf\n\n` + // ✅ NOVO: avisa sobre o anexo
+        `📄 Guia de instalação completo em anexo: Guia de Instalação - HennAccess.pdf\n\n` +
         `Dúvidas? Responda este e-mail — o suporte é direto com o desenvolvedor.\n\n` +
-        `Guarde este e-mail para futuras renovações.`,
+        `Guarde este e-mail para futuras renovações.` +
+
+        divider +
+
+        // ---------- ENGLISH ----------
+        `Thank you for your purchase!\n\n` +
+        `Your license key is: ${licenseKey}\n\n` +
+        (downloadUrl ? `Download the program here:\n${downloadUrl}\n\n` : '') +
+        `How to use:\n` +
+        `1. Download and install the program on your computer (Windows).\n` +
+        `2. The first time you open it, paste this key when prompted.\n` +
+        `3. Done — the license stays active for 1 year from activation.\n\n` +
+        `Your key can be activated on up to 2 computers.\n\n` +
+        `⚠️ IMPORTANT: HennAccess works only on Windows 10 and 11 (64-bit).\n` +
+        `It does not work on 32-bit versions of Windows.\n\n` +
+        `📄 Full installation guide attached: HennAccess Installation Guide.pdf\n\n` +
+        `Questions? Just reply to this email — support is direct with the developer.\n\n` +
+        `Keep this email for future renewals.` +
+
+        divider +
+
+        // ---------- ESPAÑOL ----------
+        `¡Gracias por tu compra!\n\n` +
+        `Tu clave de licencia es: ${licenseKey}\n\n` +
+        (downloadUrl ? `Descarga el programa aquí:\n${downloadUrl}\n\n` : '') +
+        `Cómo usar:\n` +
+        `1. Descarga e instala el programa en la computadora (Windows).\n` +
+        `2. La primera vez que lo abras, pega esta clave cuando se te solicite.\n` +
+        `3. Listo — la licencia permanece activa por 1 año desde la activación.\n\n` +
+        `Tu clave puede activarse en hasta 2 computadoras.\n\n` +
+        `⚠️ IMPORTANTE: HennAccess funciona solo en Windows 10 y 11 (64 bits).\n` +
+        `No funciona en versiones de 32 bits de Windows.\n\n` +
+        `📄 Guía de instalación completa adjunta: Guía de Instalación - HennAccess.pdf\n\n` +
+        `¿Dudas? Responde este correo — el soporte es directo con el desarrollador.\n\n` +
+        `Guarda este correo para futuras renovaciones.`,
       attachments: [
         {
           filename: 'Guia de Instalação - HennAccess.pdf',
-          path: GUIDE_PDF,
+          path: GUIDE_PDF_PT,
+          contentType: 'application/pdf',
+        },
+        {
+          filename: 'HennAccess Installation Guide.pdf',
+          path: GUIDE_PDF_EN,
+          contentType: 'application/pdf',
+        },
+        {
+          filename: 'Guía de Instalación - HennAccess.pdf',
+          path: GUIDE_PDF_ES,
           contentType: 'application/pdf',
         },
       ],
@@ -75,22 +122,43 @@ async function sendRenewalEmail(toEmail, licenseKey, expiresAt) {
   const transporter = getTransporter();
   if (!transporter || !toEmail) return false;
 
+  const validade = new Date(expiresAt).toLocaleDateString('pt-BR');
+  const divider = '\n\n' + '─'.repeat(48) + '\n\n';
+
   try {
     await transporter.sendMail({
       from: `"HennAccess - Suporte" <${process.env.GMAIL_USER}>`,
       to: toEmail,
-      subject: 'Licença renovada - HennAccess',
+      subject: 'Licença renovada - HennAccess | License renewed | Licencia renovada',
       text:
+        // ---------- PORTUGUÊS ----------
         `Sua licença foi renovada com sucesso!\n\n` +
         `Chave de licença: ${licenseKey}\n` +
-        `Nova validade: ${new Date(expiresAt).toLocaleDateString('pt-BR')}\n\n` +
-        `Não é necessário reinstalar nada — o programa já é atualizado automaticamente.`,
+        `Nova validade: ${validade}\n\n` +
+        `Não é necessário reinstalar nada — o programa já é atualizado automaticamente.` +
+
+        divider +
+
+        // ---------- ENGLISH ----------
+        `Your license has been renewed successfully!\n\n` +
+        `License key: ${licenseKey}\n` +
+        `New expiration date: ${validade}\n\n` +
+        `No need to reinstall anything — the program updates itself automatically.` +
+
+        divider +
+
+        // ---------- ESPAÑOL ----------
+        `¡Tu licencia se renovó con éxito!\n\n` +
+        `Clave de licencia: ${licenseKey}\n` +
+        `Nueva validez: ${validade}\n\n` +
+        `No es necesario reinstalar nada — el programa se actualiza automáticamente.`,
     });
     return true;
   } catch (e) {
     console.error('Erro ao enviar e-mail de renovação:', e);
     return false;
   }
+}
 }
 
 async function sendAdminAlert(subject, text) {
