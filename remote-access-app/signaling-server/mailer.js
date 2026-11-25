@@ -25,7 +25,9 @@ function getTransporter() {
 }
 
 // ✅ NOVO: caminho do PDF (o arquivo precisa estar na MESMA pasta deste mailer.js)
-const GUIDE_PDF = path.join(__dirname, 'Guia de Instalação - HennAccess.pdf');
+const GUIDE_PDF_PT = path.join(__dirname, 'Guia de Instalação - HennAccess.pdf');
+const GUIDE_PDF_EN = path.join(__dirname, 'HennAccess Installation Guide.pdf');
+const GUIDE_PDF_ES = path.join(__dirname, 'Guía de Instalación - HennAccess.pdf');
 
 async function sendLicenseEmail(toEmail, licenseKey) {
   const transporter = getTransporter();
