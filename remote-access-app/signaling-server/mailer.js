@@ -45,7 +45,7 @@ async function sendLicenseEmail(toEmail, licenseKey) {
     await transporter.sendMail({
       from: `"HennAccess - Suporte" <${process.env.GMAIL_USER}>`,
       to: toEmail,
-      subject: 'Sua chave de licença - HennAccess | Your license key | Su clave de licencia',
+      subject: 'HennAccess - Sua chave de licença | Your license key | Su clave de licencia',
       text:
         // ---------- PORTUGUÊS ----------
         `Obrigado pela compra!\n\n` +
